@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>مختبر الهندسة التفاعلي الشامل</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.js"></script>
+    
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; background-color: #f8fafc; }
+        #geometry-engine-root { height: 100vh; width: 100vw; }
+        canvas { touch-action: none; }
+        .sidebar-scroll { overflow-y: auto; scrollbar-width: thin; }
+        .sidebar-scroll::-webkit-scrollbar { width: 6px; }
+        .sidebar-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .zoom-controls { position: absolute; bottom: 24px; left: 24px; display: flex; flex-direction: column; gap: 8px; z-index: 30; }
+        .zoom-btn { width: 44px; height: 44px; background: white; border: 1px solid #e2e8f0; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; color: #475569; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); transition: all 0.2s; }
+        .zoom-btn:hover { background: #f1f5f9; transform: translateY(-1px); }
+        .embed-hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div id="geometry-engine-root"></div>
+
+<script type="text/babel">
+const { useState, useRef, useEffect, useCallback, useMemo } = React;
+
+const App = () => {
+  const isEmbedMode = new URLSearchParams(window.location.search).get('embed') === 'true';
+
+  const getInitialData = (key, defaultValue) => {
+    const saved = localStorage.getItem(key);
+    return saved ? JSON.parse(saved) : defaultValue;
+  };
+
+  const [functions, setFunctions] = useState(() => getInitialData('geo_functions', [
+    { id: 'f1', expression: "y > x^2", color: '#ef4444', visible: true, thickness: 3, domainMin: '', domainMax: '', rangeMin: '', rangeMax: '' }
+  ]));
+  
+  const [sliders, setSliders] = useState(() => getInitialData('geo_sliders', [
+    { id: 's1', name: 'a', value: 1, min: -10, max: 10, step: 0.1, isAnimating: false, speed: 1, mode: 'forward', direction: 1 }
+  ]));
+
+  const [labels, setLabels] = useState(() => getInitialData('geo_labels', [
+    { id: 'l1', text: "نقطة الأصل", x: "0", y: "0", color: '#475569', visible: true, showPoint: true, rotation: "0", fontSize: "14" }
+  ]));
+
+  const [tables, setTables] = useState(() => getInitialData('geo_tables', [
+    { id: 't1', name: "جدول بيانات", visible: true, color: '#10b981', pointShape: 'circle', points: [{ x: 1, y: 1 }, { x: 2, y: 3 }] }
+  ]));
+
+  const [images, setImages] = useState([]); 
+  const [showGrid, setShowGrid] = useState(true);
+  const [showAxes, setShowAxes] = useState(true);
+  const [showLabels, setShowLabels] = useState(true);
+  const [gridStepX, setGridStepX] = useState("auto");
+  const [gridStepY, setGridStepY] = useState("auto");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(!isEmbedMode);
+  const [graphTitle, setGraphTitle] = useState("مختبر الدوال والبيانات");
+  const [zoom, setZoom] = useState(40); 
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0 });
+  const canvasRef = useRef(null);
+
+  const gridOptions = ["auto", 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, "pi"];
+  const parseStep = (val) => val === "pi" ? Math.PI : (val === "auto" ? null : parseFloat(val));
+  const config = { minZoom: 2, maxZoom: 1000, gridColor: '#f1f5f9', axisColor: '#334155', labelColor: '#94a3b8' };
+
+  // --- دوال إدارة ملفات .geolab الجديدة ---
+  const handleNewProject = () => {
+    if(confirm("هل أنت متأكد؟ سيتم مسح كافة البيانات الحالية.")) {
+        setFunctions([]); setSliders([]); setLabels([]); setTables([]); setImages([]);
+    }
+  };
+
+  const handleSaveToFile = () => {
+    const data = { 
+        version: "1.0",
+        functions, 
+        sliders, 
+        labels, 
+        tables, 
+        graphTitle, 
+        zoom, 
+        offset,
+        settings: { showGrid, showAxes, showLabels, gridStepX, gridStepY }
+    };
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    // حفظ بملف ذو امتداد خاص للمختبر
+    link.download = `${graphTitle.replace(/\s+/g, '_')}.geolab`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleOpenFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target.result);
+        if(data.functions) setFunctions(data.functions);
+        if(data.sliders) setSliders(data.sliders);
+        if(data.labels) setLabels(data.labels);
+        if(data.tables) setTables(data.tables);
+        if(data.graphTitle) setGraphTitle(data.graphTitle);
+        if(data.zoom) setZoom(data.zoom);
+        if(data.offset) setOffset(data.offset);
+        if(data.settings) {
+            setShowGrid(data.settings.showGrid);
+            setShowAxes(data.settings.showAxes);
+            setShowLabels(data.settings.showLabels);
+            setGridStepX(data.settings.gridStepX);
+            setGridStepY(data.settings.gridStepY);
+        }
+      } catch (err) { alert("خطأ: الملف غير متوافق أو تالف."); }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // Reset for same file selection
+  };
+  // ------------------------------------------
+
+  const resolveVal = (val, context) => {
+    if (typeof val === 'number') return val;
+    try { return math.evaluate(String(val).toLowerCase(), context); } 
+    catch(e) { return parseFloat(val) || 0; }
+  };
+
+  const currentContext = useMemo(() => {
+    const ctx = {};
+    sliders.forEach(s => { ctx[s.name.toLowerCase()] = s.value; });
+    return ctx;
+  }, [sliders]);
+
+  useEffect(() => {
+    localStorage.setItem('geo_functions', JSON.stringify(functions));
+    localStorage.setItem('geo_sliders', JSON.stringify(sliders));
+    localStorage.setItem('geo_labels', JSON.stringify(labels));
+    localStorage.setItem('geo_tables', JSON.stringify(tables));
+  }, [functions, sliders, labels, tables]);
+
+  useEffect(() => {
+    let animationFrame;
+    const animate = () => {
+      setSliders(prev => prev.map(s => {
+        if (!s.isAnimating) return s;
+        let delta = (s.step || 0.1) * s.speed * (s.direction || 1);
+        let nextValue = s.value + delta;
+        let nextDirection = s.direction || 1;
+
+        if (s.mode === 'forward') {
+            if (nextValue > s.max) nextValue = s.min;
+            nextDirection = 1;
+        } else if (s.mode === 'backward') {
+            if (nextValue < s.min) nextValue = s.max;
+            nextDirection = -1;
+        } else if (s.mode === 'pingpong') {
+            if (nextValue > s.max) { nextValue = s.max; nextDirection = -1; }
+            if (nextValue < s.min) { nextValue = s.min; nextDirection = 1; }
+        }
+        return { ...s, value: parseFloat(nextValue.toFixed(2)), direction: nextDirection };
+      }));
+      animationFrame = requestAnimationFrame(animate);
+    };
+
+    if (sliders.some(s => s.isAnimating)) {
+      animationFrame = requestAnimationFrame(animate);
+    }
+    return () => cancelAnimationFrame(animationFrame);
+  }, [sliders.some(s => s.isAnimating)]);
+
+  const exportImage = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const link = document.createElement('a');
+    link.download = `${graphTitle || 'geometry-lab'}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+
+  const handleZoom = (delta) => {
+    setZoom(prev => {
+        const factor = delta > 0 ? 1.2 : 0.8;
+        const newZoom = prev * factor;
+        return Math.min(config.maxZoom, Math.max(config.minZoom, newZoom));
+    });
+  };
+
+  const compiledFunctions = useMemo(() => {
+    return functions.map(f => {
+      try {
+        let expr = f.expression.toLowerCase().replace(/\s+/g, '');
+        let operator = '=';
+        if (expr.includes('>=')) operator = '>=';
+        else if (expr.includes('<=')) operator = '<=';
+        else if (expr.includes('>')) operator = '>';
+        else if (expr.includes('<')) operator = '<';
+        else if (expr.includes('=')) operator = '=';
+        const parts = expr.split(operator);
+        const mathExpr = `(${parts[0]}) - (${parts[1]})`;
+        return { ...f, node: math.parse(mathExpr), operator, context: currentContext, error: false };
+      } catch (e) { return { ...f, node: null, error: true }; }
+    });
+  }, [functions, currentContext]);
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          setImages([...images, { 
+            id: 'img' + Date.now(), 
+            element: img, 
+            x: "0", 
+            y: "0", 
+            width: "5", 
+            rotation: "0", 
+            opacity: "1", 
+            visible: true 
+          }]);
+        };
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const toScreen = (x, y, width, height) => ({ px: width / 2 + (x * zoom) + offset.x, py: height / 2 - (y * zoom) + offset.y });
+  const toMath = (px, py, width, height) => ({ x: (px - width / 2 - offset.x) / zoom, y: (height / 2 - py + offset.y) / zoom });
+
+  const getBounds = () => {
+    if (!canvasRef.current) return { xMin: -10, xMax: 10, yMin: -10, yMax: 10 };
+    const width = canvasRef.current.width;
+    const height = canvasRef.current.height;
+    const tl = toMath(0, 0, width, height);
+    const br = toMath(width, height, width, height);
+    return { xMin: tl.x, xMax: br.x, yMin: br.y, yMax: tl.y };
+  };
+
+  const drawPoint = (ctx, px, py, shape, size, color) => {
+    ctx.fillStyle = color; ctx.beginPath();
+    if (shape === 'square') ctx.rect(px - size, py - size, size * 2, size * 2);
+    else if (shape === 'triangle') { ctx.moveTo(px, py - size); ctx.lineTo(px - size, py + size); ctx.lineTo(px + size, py + size); ctx.closePath(); }
+    else ctx.arc(px, py, size, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width = canvas.offsetWidth;
+    const height = canvas.height = canvas.offsetHeight;
+    ctx.clearRect(0, 0, width, height);
+    
+    ctx.fillStyle = "white";
+    ctx.fillRect(0,0,width,height);
+
+    const centerX = width / 2 + offset.x;
+    const centerY = height / 2 + offset.y;
+    const b = getBounds();
+    const autoStep = (zoom > 150 ? 0.5 : (zoom < 30 ? 5 : 1));
+    const sX = parseStep(gridStepX) || autoStep;
+    const sY = parseStep(gridStepY) || autoStep;
+
+    if (showGrid) {
+      ctx.beginPath(); ctx.strokeStyle = config.gridColor;
+      for (let x = Math.floor(b.xMin / sX) * sX; x <= b.xMax; x += sX) {
+        const p = toScreen(x, 0, width, height);
+        ctx.moveTo(p.px, 0); ctx.lineTo(p.px, height);
+      }
+      for (let y = Math.floor(b.yMin / sY) * sY; y <= b.yMax; y += sY) {
+        const p = toScreen(0, y, width, height);
+        ctx.moveTo(0, p.py); ctx.lineTo(width, p.py);
+      }
+      ctx.stroke();
+    }
+
+    if (showAxes) {
+      ctx.beginPath(); ctx.strokeStyle = config.axisColor; ctx.lineWidth = 2;
+      ctx.moveTo(0, centerY); ctx.lineTo(width, centerY);
+      ctx.moveTo(centerX, 0); ctx.lineTo(centerX, height);
+      ctx.stroke();
+    }
+
+    if (showLabels) {
+      ctx.fillStyle = config.labelColor; ctx.font = '10px sans-serif';
+      for (let i = Math.floor(b.xMin / sX) * sX; i <= b.xMax; i += sX) {
+        if (Math.abs(i) < 0.001) continue;
+        const p = toScreen(i, 0, width, height);
+        ctx.fillText(i.toFixed(1).replace('.0',''), p.px, centerY + 15);
+      }
+      for (let i = Math.floor(b.yMin / sY) * sY; i <= b.yMax; i += sY) {
+        if (Math.abs(i) < 0.001) continue;
+        const p = toScreen(0, i, width, height);
+        ctx.fillText(i.toFixed(1).replace('.0',''), centerX - 15, p.py + 3);
+      }
+    }
+
+    images.forEach(img => {
+        if (!img.visible) return;
+        const rx = resolveVal(img.x, currentContext);
+        const ry = resolveVal(img.y, currentContext);
+        const rw = resolveVal(img.width, currentContext);
+        const rr = resolveVal(img.rotation, currentContext);
+        const ro = resolveVal(img.opacity, currentContext);
+
+        const p = toScreen(rx, ry, width, height);
+        const imgW = rw * zoom;
+        const imgH = (img.element.height / img.element.width) * imgW;
+        ctx.save();
+        ctx.translate(p.px, p.py);
+        ctx.rotate(rr * Math.PI / 180);
+        ctx.globalAlpha = ro;
+        ctx.drawImage(img.element, -imgW/2, -imgH/2, imgW, imgH);
+        ctx.restore();
+    });
+
+    tables.forEach(table => {
+      if (!table.visible) return;
+      table.points.forEach(p => {
+          if(p.x !== '' && p.y !== '') {
+            const sp = toScreen(parseFloat(p.x), parseFloat(p.y), width, height);
+            drawPoint(ctx, sp.px, sp.py, table.pointShape, 5, table.color);
+          }
+      });
+    });
+
+    labels.forEach(lbl => {
+        if (!lbl.visible) return;
+        const rx = resolveVal(lbl.x, currentContext);
+        const ry = resolveVal(lbl.y, currentContext);
+        const rr = resolveVal(lbl.rotation, currentContext);
+        const rs = resolveVal(lbl.fontSize, currentContext);
+
+        const p = toScreen(rx, ry, width, height);
+        ctx.save();
+        ctx.translate(p.px, p.py);
+        ctx.rotate(rr * Math.PI / 180);
+        ctx.fillStyle = lbl.color; 
+        ctx.font = `bold ${rs}px sans-serif`; 
+        ctx.textAlign = 'center';
+        ctx.fillText(lbl.text, 0, -12);
+        ctx.restore();
+        if (lbl.showPoint) {
+            ctx.beginPath(); ctx.fillStyle = lbl.color; ctx.arc(p.px, p.py, 4, 0, Math.PI * 2); ctx.fill();
+        }
+    });
+
+    compiledFunctions.forEach(f => {
+      if (!f.visible || f.error || !f.node) return;
+      const code = f.node.compile();
+      const res = 4; const rows = Math.ceil(height / res); const cols = Math.ceil(width / res);
+      const gridData = new Float32Array((rows + 1) * (cols + 1));
+      
+      const dMin = f.domainMin !== '' ? parseFloat(f.domainMin) : -Infinity;
+      const dMax = f.domainMax !== '' ? parseFloat(f.domainMax) : Infinity;
+      const rMin = f.rangeMin !== '' ? parseFloat(f.rangeMin) : -Infinity;
+      const rMax = f.rangeMax !== '' ? parseFloat(f.rangeMax) : Infinity;
+
+      for (let j = 0; j <= rows; j++) {
+        for (let i = 0; i <= cols; i++) {
+          const m = toMath(i * res, j * res, width, height);
+          if (m.x < dMin || m.x > dMax || m.y < rMin || m.y > rMax) { gridData[j * (cols + 1) + i] = NaN; continue; }
+          try { gridData[j * (cols + 1) + i] = code.evaluate({ x: m.x, y: m.y, ...f.context }); } catch (e) { gridData[j * (cols + 1) + i] = NaN; }
+        }
+      }
+
+      if (f.operator !== '=') {
+        ctx.fillStyle = f.color + '33';
+        for (let j = 0; j < rows; j++) {
+          for (let i = 0; i < cols; i++) {
+            const val = gridData[j * (cols + 1) + i];
+            if (isNaN(val)) continue;
+            let shouldFill = false;
+            if (f.operator === '>' || f.operator === '>=') shouldFill = val > 0;
+            if (f.operator === '<' || f.operator === '<=') shouldFill = val < 0;
+            if (shouldFill) ctx.fillRect(i * res, j * res, res, res);
+          }
+        }
+      }
+
+      ctx.beginPath(); ctx.strokeStyle = f.color; ctx.lineWidth = f.thickness;
+      if (f.operator === '>' || f.operator === '<') ctx.setLineDash([10, 5]); else ctx.setLineDash([]);
+      
+      for (let j = 0; j < rows; j++) {
+        for (let i = 0; i < cols; i++) {
+          const x0 = i * res, x1 = (i + 1) * res, y0 = j * res, y1 = (j + 1) * res;
+          const v0 = gridData[j * (cols + 1) + i], v1 = gridData[j * (cols + 1) + (i + 1)], v2 = gridData[(j + 1) * (cols + 1) + (i + 1)], v3 = gridData[(j + 1) * (cols + 1) + i];
+          if (isNaN(v0) || isNaN(v1) || isNaN(v2) || isNaN(v3)) continue;
+          const getEdge = (valA, valB, pA, pB) => { if (valA * valB > 0) return null; const t = Math.abs(valA) / (Math.abs(valA) + Math.abs(valB)); return { x: pA.x + t * (pB.x - pA.x), y: pA.y + t * (pB.y - pA.y) }; };
+          const edges = [getEdge(v0,v1,{x:x0,y:y0},{x:x1,y:y0}),getEdge(v1,v2,{x:x1,y:y0},{x:x1,y:y1}),getEdge(v2,v3,{x:x1,y:y1},{x:x0,y:y1}),getEdge(v3,v0,{x:x0,y:y1},{x:x0,y:y0})].filter(e => e !== null);
+          if (edges.length >= 2) { ctx.moveTo(edges[0].x, edges[0].y); ctx.lineTo(edges[1].x, edges[1].y); }
+        }
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+
+    if (graphTitle) {
+      ctx.fillStyle = '#1e293b'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(graphTitle, width / 2, 50);
+    }
+  }, [compiledFunctions, showGrid, showAxes, showLabels, gridStepX, gridStepY, zoom, offset, graphTitle, labels, tables, images, sliders, currentContext]);
+
+  useEffect(() => { draw(); window.addEventListener('resize', draw); return () => window.removeEventListener('resize', draw); }, [draw]);
+
+  return (
+    <div className="flex h-screen w-screen bg-white overflow-hidden font-sans text-right relative" dir="rtl">
+      
+      <div className={`zoom-controls ${isEmbedMode ? 'embed-hidden' : ''}`}>
+          <button onClick={() => handleZoom(1)} className="zoom-btn" title="Zoom In">+</button>
+          <button onClick={() => handleZoom(-1)} className="zoom-btn" title="Zoom Out">−</button>
+      </div>
+
+      <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`absolute top-4 right-4 z-50 p-2 bg-white border border-slate-200 shadow-lg rounded-full transition-all duration-300 ${isSidebarOpen ? 'mr-80' : 'mr-0'} ${isEmbedMode ? 'embed-hidden' : ''}`}>
+        <svg xmlns="http://www.w3.org/2000/svg" className={`h-6 w-6 text-slate-600 ${isSidebarOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+      </button>
+
+      <div className={`fixed inset-y-0 right-0 w-80 bg-slate-50 border-l border-slate-200 flex flex-col sidebar-scroll p-6 space-y-6 shadow-2xl z-40 transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+        <h2 className="font-bold text-slate-800 text-xl border-b pb-2">مختبر الهندسة</h2>
+        
+        <div className="grid grid-cols-3 gap-1">
+            <button onClick={handleNewProject} className="bg-white border border-slate-300 text-[10px] p-1 rounded font-bold hover:bg-slate-100 transition-colors">📄 جديد</button>
+            <button onClick={handleSaveToFile} className="bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] p-1 rounded font-bold hover:bg-indigo-100 transition-colors">💾 حفظ (.geolab)</button>
+            <label className="bg-white border border-slate-300 text-[10px] p-1 rounded font-bold text-center cursor-pointer hover:bg-slate-100 transition-colors">📂 فتح<input type="file" accept=".geolab,.json" className="hidden" onChange={handleOpenFile} /></label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => setSliders([...sliders, { id: 's'+Date.now(), name: 'var', value: 1, min: -10, max: 10, step: 0.1, isAnimating: false, speed: 1, mode: 'forward', direction: 1 }])} className="text-[11px] bg-indigo-600 text-white p-2 rounded font-bold">+ منزلق</button>
+            <button onClick={() => setFunctions([...functions, { id: 'f'+Date.now(), expression: "y = x", color: '#3b82f6', visible: true, thickness: 3, domainMin: '', domainMax: '', rangeMin: '', rangeMax: '' }])} className="text-[11px] bg-blue-600 text-white p-2 rounded font-bold">+ دالة</button>
+            <button onClick={() => setTables([...tables, { id: 't'+Date.now(), name: "جدول جديد", visible: true, color: '#f59e0b', pointShape: 'circle', points: [{ x: 0, y: 0 }] }])} className="text-[11px] bg-amber-500 text-white p-2 rounded font-bold">+ جدول</button>
+            <button onClick={() => setLabels([...labels, { id: 'l'+Date.now(), text: "نص جديد", x: "2", y: "2", color: '#059669', visible: true, showPoint: true, rotation: "0", fontSize: "14" }])} className="text-[11px] bg-emerald-600 text-white p-2 rounded font-bold">+ نص</button>
+            <label className="text-[11px] bg-rose-500 text-white p-2 rounded font-bold text-center cursor-pointer">+ صورة<input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} /></label>
+        </div>
+
+        {labels.map(lbl => (
+            <div key={lbl.id} className="p-3 bg-white border rounded-xl shadow-sm space-y-3">
+                <div className="flex justify-between items-center text-xs font-bold border-b pb-1">
+                    <div className="flex items-center gap-2">
+                        <input type="color" value={lbl.color} onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, color: e.target.value} : l))} className="w-4 h-4 border-none cursor-pointer" />
+                        <span>تحكم بالنص</span>
+                    </div>
+                    <button onClick={() => setLabels(labels.filter(x => x.id !== lbl.id))} className="text-red-300 text-lg">×</button>
+                </div>
+                <input type="text" className="w-full p-1 border rounded text-xs" value={lbl.text} placeholder="أدخل النص هنا..." onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, text: e.target.value} : l))} />
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="flex flex-col"><label>X (رقم أو منزلق):</label><input type="text" className="p-1 border rounded text-center" value={lbl.x} onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, x: e.target.value} : l))} /></div>
+                    <div className="flex flex-col"><label>Y (رقم أو منزلق):</label><input type="text" className="p-1 border rounded text-center" value={lbl.y} onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, y: e.target.value} : l))} /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="flex flex-col"><label>الحجم:</label><input type="text" className="p-1 border rounded text-center" value={lbl.fontSize} onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, fontSize: e.target.value} : l))} /></div>
+                    <div className="flex flex-col"><label>الدوران:</label><input type="text" className="p-1 border rounded text-center" value={lbl.rotation} onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, rotation: e.target.value} : l))} /></div>
+                </div>
+                <div className="flex items-center justify-between text-[10px]">
+                    <label>إظهار النقطة:</label>
+                    <input type="checkbox" checked={lbl.showPoint} onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, showPoint: e.target.checked} : l))} />
+                </div>
+            </div>
+        ))}
+
+        {images.map(img => (
+            <div key={img.id} className="p-3 bg-white border rounded-xl shadow-sm space-y-3">
+                <div className="flex justify-between items-center text-xs font-bold border-b pb-1">
+                    <span>🖼️ صورة التحكم</span>
+                    <button onClick={() => setImages(images.filter(x => x.id !== img.id))} className="text-red-300 text-lg">×</button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="flex flex-col"><label>X (رقم أو منزلق):</label><input type="text" className="p-1 border rounded text-center" value={img.x} onChange={e => setImages(prev => prev.map(i => i.id === img.id ? {...i, x: e.target.value} : i))} /></div>
+                    <div className="flex flex-col"><label>Y (رقم أو منزلق):</label><input type="text" className="p-1 border rounded text-center" value={img.y} onChange={e => setImages(prev => prev.map(i => i.id === img.id ? {...i, y: e.target.value} : i))} /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="flex flex-col"><label>العرض:</label><input type="text" className="p-1 border rounded text-center" value={img.width} onChange={e => setImages(prev => prev.map(i => i.id === img.id ? {...i, width: e.target.value} : i))} /></div>
+                    <div className="flex flex-col"><label>الشفافية:</label><input type="text" className="p-1 border rounded text-center" value={img.opacity} onChange={e => setImages(prev => prev.map(i => i.id === img.id ? {...i, opacity: e.target.value} : i))} /></div>
+                </div>
+                <div className="flex flex-col text-[10px]"><label>الدوران:</label><input type="text" className="p-1 border rounded text-center" value={img.rotation} onChange={e => setImages(prev => prev.map(i => i.id === img.id ? {...i, rotation: e.target.value} : i))} /></div>
+            </div>
+        ))}
+
+        {sliders.map(s => (
+            <div key={s.id} className="p-3 bg-white border rounded-xl shadow-sm space-y-2">
+                <div className="flex justify-between items-center text-xs font-bold">
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => setSliders(prev => prev.map(item => item.id === s.id ? {...item, isAnimating: !item.isAnimating, direction: item.mode === 'backward' ? -1 : 1} : item))} className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors ${s.isAnimating ? 'bg-amber-100 text-amber-600' : 'bg-indigo-100 text-indigo-600'}`}>{s.isAnimating ? 'Ⅱ' : '▶'}</button>
+                      <input type="text" className="w-8 border-none bg-transparent" value={s.name} onChange={e => setSliders(prev => prev.map(item => item.id === s.id ? {...item, name: e.target.value} : item))} />
+                    </div>
+                    <span> = {s.value}</span>
+                    <button onClick={() => setSliders(sliders.filter(x => x.id !== s.id))} className="text-red-300 text-lg">×</button>
+                </div>
+                <input type="range" min={s.min} max={s.max} step={s.step} value={s.value} onChange={e => setSliders(prev => prev.map(item => item.id === s.id ? {...item, value: parseFloat(e.target.value)} : item))} className="w-full accent-indigo-600" />
+                <div className="flex flex-col gap-2 p-2 bg-slate-50 rounded-lg border border-slate-100">
+                    <div className="flex items-center justify-between gap-2 text-[9px] font-bold"><span>السرعة:</span><input type="range" min="0.1" max="5" step="0.1" value={s.speed} onChange={e => setSliders(prev => prev.map(item => item.id === s.id ? {...item, speed: parseFloat(e.target.value)} : item))} className="w-24 h-1 accent-emerald-500" /><span>{s.speed}x</span></div>
+                    <div className="flex items-center justify-between gap-2 text-[9px] font-bold"><span>النمط:</span><select value={s.mode} onChange={e => setSliders(prev => prev.map(item => item.id === s.id ? {...item, mode: e.target.value, direction: e.target.value === 'backward' ? -1 : 1} : item))} className="bg-white border rounded p-0.5 text-[9px]"><option value="forward">للأمام ⮕</option><option value="backward">للخلف ⬅</option><option value="pingpong">ذهاب وإياب ↔</option></select></div>
+                </div>
+                <div className="flex gap-2 text-[10px]"><div className="flex flex-col flex-1"><label>أدنى:</label><input type="number" className="p-0.5 border rounded text-center" value={s.min} onChange={e => setSliders(prev => prev.map(item => item.id === s.id ? {...item, min: parseFloat(e.target.value)} : item))} /></div><div className="flex flex-col flex-1"><label>أقصى:</label><input type="number" className="p-0.5 border rounded text-center" value={s.max} onChange={e => setSliders(prev => prev.map(item => item.id === s.id ? {...item, max: parseFloat(e.target.value)} : item))} /></div></div>
+            </div>
+        ))}
+
+        {functions.map(f => (
+          <div key={f.id} className="p-3 bg-white border rounded-xl shadow-sm space-y-3">
+            <div className="flex gap-2 items-center"><input type="color" value={f.color} onChange={e => setFunctions(prev => prev.map(item => item.id === f.id ? {...item, color: e.target.value} : item))} className="w-5 h-5 border-none cursor-pointer" /><input type="text" className="flex-1 p-1 border rounded text-xs font-mono" style={{ direction: 'ltr' }} value={f.expression} onChange={e => setFunctions(prev => prev.map(item => item.id === f.id ? {...item, expression: e.target.value} : item))} /><button onClick={() => setFunctions(functions.filter(x => x.id !== f.id))} className="text-red-300 text-lg">×</button></div>
+          </div>
+        ))}
+
+        {tables.map(t => (
+          <div key={t.id} className="p-3 bg-white border rounded-xl shadow-sm space-y-2">
+            <div className="flex justify-between items-center text-xs font-bold border-b pb-1"><div className="flex items-center gap-2"><input type="color" value={t.color} onChange={e => setTables(prev => prev.map(item => item.id === t.id ? {...item, color: e.target.value} : item))} className="w-4 h-4 border-none" /><input type="text" className="w-24 bg-transparent" value={t.name} onChange={e => setTables(prev => prev.map(item => item.id === t.id ? {...item, name: e.target.value} : item))} /></div><button onClick={() => setTables(tables.filter(x => x.id !== t.id))} className="text-red-300 text-lg">×</button></div>
+            <table className="w-full text-center text-[10px]"><tbody>{t.points.map((p, idx) => (<tr key={idx}><td><input type="number" className="w-full p-1 border-none text-center" value={p.x} onChange={e => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: tab.points.map((pt, i) => i === idx ? {...pt, x: e.target.value} : pt)} : tab))} /></td><td><input type="number" className="w-full p-1 border-none text-center" value={p.y} onChange={e => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: tab.points.map((pt, i) => i === idx ? {...pt, y: e.target.value} : pt)} : tab))} /></td><td><button className="text-red-400 font-bold px-1" onClick={() => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: tab.points.filter((_, i) => i !== idx)} : tab))}>×</button></td></tr>))}</tbody></table>
+            <button className="w-full py-1 text-[10px] bg-slate-100 hover:bg-slate-200 rounded font-bold" onClick={() => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: [...tab.points, {x:0, y:0}]} : tab))}>+ صف</button>
+          </div>
+        ))}
+
+        <div className="mt-auto pt-4 border-t border-slate-200 space-y-4">
+            <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-lg space-y-2">
+                <label className="text-[10px] font-bold text-indigo-700">كود التضمين (iframe):</label>
+                <textarea readOnly className="w-full p-1 text-[9px] font-mono border rounded bg-white" rows="2" value={`<iframe src="${window.location.href.split('?')[0]}?embed=true" width="800" height="600" style="border:1px solid #ccc;"></iframe>`} />
+            </div>
+            <button onClick={exportImage} className="w-full py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 shadow-md transition-all">📷 تصدير كصورة PNG</button>
+            <div className="grid grid-cols-2 gap-2 bg-white p-3 rounded-xl border">
+                <div className="flex flex-col"><label className="text-[10px] font-bold">X:</label><select value={gridStepX} onChange={e => setGridStepX(e.target.value)} className="p-1 border rounded text-xs">{gridOptions.map(opt => <option key={opt} value={opt}>{opt === 'pi' ? 'π' : opt}</option>)}</select></div>
+                <div className="flex flex-col"><label className="text-[10px] font-bold">Y:</label><select value={gridStepY} onChange={e => setGridStepY(e.target.value)} className="p-1 border rounded text-xs">{gridOptions.map(opt => <option key={opt} value={opt}>{opt === 'pi' ? 'π' : opt}</option>)}</select></div>
+            </div>
+            <div className="space-y-1 text-xs font-medium text-slate-600 bg-white p-2 rounded border shadow-inner">
+                <div className="flex justify-between"><span>المحاور</span><input type="checkbox" checked={showAxes} onChange={e => setShowAxes(e.target.checked)} /></div>
+                <div className="flex justify-between"><span>الشبكة</span><input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} /></div>
+                <div className="flex justify-between"><span>الأرقام</span><input type="checkbox" checked={showLabels} onChange={e => setShowLabels(e.target.checked)} /></div>
+            </div>
+            <button onClick={() => {localStorage.clear(); window.location.reload();}} className="w-full py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-100 transition-colors">مسح كافة البيانات المحفوظة</button>
+        </div>
+      </div>
+
+      <div className="flex-1 relative bg-white">
+        <canvas ref={canvasRef} onPointerDown={(e) => {setIsDragging(true); dragStart.current = { x: e.clientX - offset.x, y: e.clientY - offset.y };}} onPointerMove={(e) => {if (isDragging) setOffset({ x: e.clientX - dragStart.current.x, y: e.clientY - dragStart.current.y });}} onPointerUp={() => setIsDragging(false)} onWheel={(e) => setZoom(z => Math.min(config.maxZoom, Math.max(config.minZoom, z + (e.deltaY > 0 ? -z*0.1 : z*0.1))))} className="w-full h-full cursor-grab active:cursor-grabbing" />
+      </div>
+    </div>
+  );
+};
+
+const root = ReactDOM.createRoot(document.getElementById('geometry-engine-root'));
+root.render(<App />);
+</script>
+</body>
+</html>

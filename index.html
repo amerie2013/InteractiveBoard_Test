@@ -75,19 +75,25 @@ const App = () => {
   const parseStep = (val) => val === "pi" ? Math.PI : (val === "auto" ? null : parseFloat(val));
   const config = { minZoom: 2, maxZoom: 1000, gridColor: '#f1f5f9', axisColor: '#334155', labelColor: '#94a3b8' };
 
-  const generateEmbedUrl = () => {
+  // AUTOMATIC IFRAME UPDATE: This triggers every time data changes
+  const autoEmbedIframe = useMemo(() => {
     const baseUrl = window.location.origin + window.location.pathname;
     const dataToSave = {
         f: functions,
         s: sliders,
         t: tables,
         l: labels,
+        i: images.map(img => ({ ...img, src: img.element.src, element: undefined })), // Include image data
         title: graphTitle,
         settings: { showGrid, showAxes, showLabels }
     };
-    const encodedData = btoa(unescape(encodeURIComponent(JSON.stringify(dataToSave))));
-    return `<iframe src="${baseUrl}?embed=true&data=${encodedData}" width="800" height="600" style="border:1px solid #ccc; border-radius:12px;"></iframe>`;
-  };
+    try {
+        const encodedData = btoa(unescape(encodeURIComponent(JSON.stringify(dataToSave))));
+        return `<iframe src="${baseUrl}?embed=true&data=${encodedData}" width="800" height="600" style="border:1px solid #ccc; border-radius:12px;"></iframe>`;
+    } catch (e) {
+        return "جاري توليد الكود...";
+    }
+  }, [functions, sliders, tables, labels, images, graphTitle, showGrid, showAxes, showLabels]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -104,6 +110,14 @@ const App = () => {
                 setShowGrid(decodedData.settings.showGrid);
                 setShowAxes(decodedData.settings.showAxes);
                 setShowLabels(decodedData.settings.showLabels);
+            }
+            if (decodedData.i) {
+                const loadedImages = decodedData.i.map(imgData => {
+                    const img = new Image();
+                    img.src = imgData.src;
+                    return { ...imgData, element: img };
+                });
+                setImages(loadedImages);
             }
             return;
         } catch (e) { console.error("Error decoding embed data"); }
@@ -462,7 +476,6 @@ const App = () => {
           <button onClick={() => handleZoom(-1)} className="zoom-btn" title="Zoom Out">−</button>
       </div>
 
-      {/* Embedded Controller - Shows only in embed mode */}
       {isEmbedMode && sliders.length > 0 && (
           <div className="embed-controller">
               {sliders.map(s => (
@@ -525,8 +538,8 @@ const App = () => {
                 </div>
                 <input type="text" className="w-full p-1 border rounded text-xs" value={lbl.text} placeholder="أدخل النص هنا..." onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, text: e.target.value} : l))} />
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
-                    <div className="flex flex-col"><label>X (رقم أو منزلق):</label><input type="text" className="p-1 border rounded text-center" value={lbl.x} onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, x: e.target.value} : l))} /></div>
-                    <div className="flex flex-col"><label>Y (رقم أو منزلق):</label><input type="text" className="p-1 border rounded text-center" value={lbl.y} onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, y: e.target.value} : l))} /></div>
+                    <div className="flex flex-col"><label>X:</label><input type="text" className="p-1 border rounded text-center" value={lbl.x} onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, x: e.target.value} : l))} /></div>
+                    <div className="flex flex-col"><label>Y:</label><input type="text" className="p-1 border rounded text-center" value={lbl.y} onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, y: e.target.value} : l))} /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
                     <div className="flex flex-col"><label>الحجم:</label><input type="text" className="p-1 border rounded text-center" value={lbl.fontSize} onChange={e => setLabels(prev => prev.map(l => l.id === lbl.id ? {...l, fontSize: e.target.value} : l))} /></div>
@@ -546,8 +559,8 @@ const App = () => {
                     <button onClick={() => setImages(images.filter(x => x.id !== img.id))} className="text-red-300 text-lg">×</button>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
-                    <div className="flex flex-col"><label>X (رقم أو منزلق):</label><input type="text" className="p-1 border rounded text-center" value={img.x} onChange={e => setImages(prev => prev.map(i => i.id === img.id ? {...i, x: e.target.value} : i))} /></div>
-                    <div className="flex flex-col"><label>Y (رقم أو منزلق):</label><input type="text" className="p-1 border rounded text-center" value={img.y} onChange={e => setImages(prev => prev.map(i => i.id === img.id ? {...i, y: e.target.value} : i))} /></div>
+                    <div className="flex flex-col"><label>X:</label><input type="text" className="p-1 border rounded text-center" value={img.x} onChange={e => setImages(prev => prev.map(i => i.id === img.id ? {...i, x: e.target.value} : i))} /></div>
+                    <div className="flex flex-col"><label>Y:</label><input type="text" className="p-1 border rounded text-center" value={img.y} onChange={e => setImages(prev => prev.map(i => i.id === img.id ? {...i, y: e.target.value} : i))} /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
                     <div className="flex flex-col"><label>العرض:</label><input type="text" className="p-1 border rounded text-center" value={img.width} onChange={e => setImages(prev => prev.map(i => i.id === img.id ? {...i, width: e.target.value} : i))} /></div>
@@ -605,7 +618,14 @@ const App = () => {
         <div className="mt-auto pt-4 border-t border-slate-200 space-y-4">
             <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-lg space-y-2">
                 <label className="text-[10px] font-bold text-indigo-700">كود التضمين الذكي (iframe):</label>
-                <textarea readOnly className="w-full p-1 text-[9px] font-mono border rounded bg-white" rows="3" value={generateEmbedUrl()} />
+                <textarea 
+                  readOnly 
+                  className="w-full p-1 text-[9px] font-mono border rounded bg-white" 
+                  rows="3" 
+                  value={autoEmbedIframe} 
+                  onClick={(e) => e.target.select()}
+                />
+                <p className="text-[8px] text-slate-500">* يتم تحديث الكود تلقائياً عند أي تغيير.</p>
             </div>
             <button onClick={exportImage} className="w-full py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 shadow-md transition-all">📷 تصدير كصورة PNG</button>
             <div className="grid grid-cols-2 gap-2 bg-white p-3 rounded-xl border">

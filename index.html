@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>مختبر الهندسة التفاعلي الشامل</title>
+    <title>مختبر موقع التكامل</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -51,7 +51,7 @@ const App = () => {
   ]));
 
   const [tables, setTables] = useState(() => getInitialData('geo_tables', [
-    { id: 't1', name: "جدول بيانات", visible: true, color: '#10b981', pointShape: 'circle', points: [{ x: 1, y: 1 }, { x: 2, y: 3 }] }
+    { id: 't1', name: "جدول بيانات", visible: true, color: '#10b981', pointShape: 'circle', points: [{ x: "1", y: "1" }, { x: "2", y: "3" }] }
   ]));
 
   const [images, setImages] = useState([]); 
@@ -72,7 +72,39 @@ const App = () => {
   const parseStep = (val) => val === "pi" ? Math.PI : (val === "auto" ? null : parseFloat(val));
   const config = { minZoom: 2, maxZoom: 1000, gridColor: '#f1f5f9', axisColor: '#334155', labelColor: '#94a3b8' };
 
-  // --- دوال إدارة ملفات .geolab الجديدة ---
+  // التحديث الجديد: قراءة الإعدادات من الرابط (URL Parameters)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    
+    // ضبط العنوان
+    if (params.get('title')) setGraphTitle(params.get('title'));
+    
+    // ضبط الدالة
+    if (params.get('f')) {
+      setFunctions([{ id: 'f_url', expression: params.get('f'), color: '#3b82f6', visible: true, thickness: 3, domainMin: '', domainMax: '', rangeMin: '', rangeMax: '' }]);
+    }
+    
+    // ضبط المنزلق
+    if (params.get('v')) {
+      setSliders([{
+        id: 's_url',
+        name: params.get('v'),
+        value: parseFloat(params.get('val')) || 1,
+        min: parseFloat(params.get('min')) || -10,
+        max: parseFloat(params.get('max')) || 10,
+        step: 0.1,
+        isAnimating: params.get('animate') === 'true',
+        speed: 1,
+        mode: params.get('mode') || 'pingpong',
+        direction: 1
+      }]);
+    }
+
+    // ضبط الرؤية
+    if (params.get('grid') === 'false') setShowGrid(false);
+    if (params.get('axes') === 'false') setShowAxes(false);
+  }, []);
+
   const handleNewProject = () => {
     if(confirm("هل أنت متأكد؟ سيتم مسح كافة البيانات الحالية.")) {
         setFunctions([]); setSliders([]); setLabels([]); setTables([]); setImages([]);
@@ -82,23 +114,41 @@ const App = () => {
   const handleSaveToFile = () => {
     const data = { 
         version: "1.0",
-        functions, 
-        sliders, 
-        labels, 
-        tables, 
-        graphTitle, 
-        zoom, 
-        offset,
+        functions, sliders, labels, tables, graphTitle, zoom, offset,
         settings: { showGrid, showAxes, showLabels, gridStepX, gridStepY }
     };
     const blob = new Blob([JSON.stringify(data)], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    // حفظ بملف ذو امتداد خاص للمختبر
     link.download = `${graphTitle.replace(/\s+/g, '_')}.geolab`;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleSaveOnline = async () => {
+    const data = { 
+        version: "1.0",
+        functions, sliders, labels, tables, graphTitle, zoom, offset,
+        settings: { showGrid, showAxes, showLabels, gridStepX, gridStepY }
+    };
+    const token = prompt("أدخل رمز GitHub Token الخاص بك (للحفظ السحابي):");
+    if(!token) return alert("مطلوب رمز الوصول للحفظ عبر الإنترنت.");
+    try {
+        const response = await fetch('https://api.github.com/gists', {
+            method: 'POST',
+            headers: { 'Authorization': `token ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                description: `Geometry Lab Project: ${graphTitle}`,
+                public: false,
+                files: { [`${graphTitle}.geolab`]: { content: JSON.stringify(data) } }
+            })
+        });
+        const result = await response.json();
+        if(result.html_url) {
+            alert(`تم الحفظ بنجاح! رابط الملف: ${result.html_url}`);
+        } else { throw new Error("Failed to save."); }
+    } catch (err) { alert("خطأ أثناء الحفظ عبر الإنترنت. تحقق من الرمز المكتوب."); }
   };
 
   const handleOpenFile = (e) => {
@@ -125,12 +175,12 @@ const App = () => {
       } catch (err) { alert("خطأ: الملف غير متوافق أو تالف."); }
     };
     reader.readAsText(file);
-    e.target.value = ''; // Reset for same file selection
+    e.target.value = ''; 
   };
-  // ------------------------------------------
 
   const resolveVal = (val, context) => {
     if (typeof val === 'number') return val;
+    if (val === '') return 0;
     try { return math.evaluate(String(val).toLowerCase(), context); } 
     catch(e) { return parseFloat(val) || 0; }
   };
@@ -156,25 +206,14 @@ const App = () => {
         let delta = (s.step || 0.1) * s.speed * (s.direction || 1);
         let nextValue = s.value + delta;
         let nextDirection = s.direction || 1;
-
-        if (s.mode === 'forward') {
-            if (nextValue > s.max) nextValue = s.min;
-            nextDirection = 1;
-        } else if (s.mode === 'backward') {
-            if (nextValue < s.min) nextValue = s.max;
-            nextDirection = -1;
-        } else if (s.mode === 'pingpong') {
-            if (nextValue > s.max) { nextValue = s.max; nextDirection = -1; }
-            if (nextValue < s.min) { nextValue = s.min; nextDirection = 1; }
-        }
+        if (s.mode === 'forward') { if (nextValue > s.max) nextValue = s.min; nextDirection = 1; } 
+        else if (s.mode === 'backward') { if (nextValue < s.min) nextValue = s.max; nextDirection = -1; } 
+        else if (s.mode === 'pingpong') { if (nextValue > s.max) { nextValue = s.max; nextDirection = -1; } if (nextValue < s.min) { nextValue = s.min; nextDirection = 1; } }
         return { ...s, value: parseFloat(nextValue.toFixed(2)), direction: nextDirection };
       }));
       animationFrame = requestAnimationFrame(animate);
     };
-
-    if (sliders.some(s => s.isAnimating)) {
-      animationFrame = requestAnimationFrame(animate);
-    }
+    if (sliders.some(s => s.isAnimating)) animationFrame = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationFrame);
   }, [sliders.some(s => s.isAnimating)]);
 
@@ -220,16 +259,7 @@ const App = () => {
         const img = new Image();
         img.src = event.target.result;
         img.onload = () => {
-          setImages([...images, { 
-            id: 'img' + Date.now(), 
-            element: img, 
-            x: "0", 
-            y: "0", 
-            width: "5", 
-            rotation: "0", 
-            opacity: "1", 
-            visible: true 
-          }]);
+          setImages([...images, { id: 'img' + Date.now(), element: img, x: "0", y: "0", width: "5", rotation: "0", opacity: "1", visible: true }]);
         };
       };
       reader.readAsDataURL(file);
@@ -252,6 +282,7 @@ const App = () => {
     ctx.fillStyle = color; ctx.beginPath();
     if (shape === 'square') ctx.rect(px - size, py - size, size * 2, size * 2);
     else if (shape === 'triangle') { ctx.moveTo(px, py - size); ctx.lineTo(px - size, py + size); ctx.lineTo(px + size, py + size); ctx.closePath(); }
+    else if (shape === 'diamond') { ctx.moveTo(px, py - size); ctx.lineTo(px + size, py); ctx.lineTo(px, py + size); ctx.lineTo(px - size, py); ctx.closePath(); }
     else ctx.arc(px, py, size, 0, Math.PI * 2);
     ctx.fill();
   };
@@ -263,9 +294,7 @@ const App = () => {
     const width = canvas.width = canvas.offsetWidth;
     const height = canvas.height = canvas.offsetHeight;
     ctx.clearRect(0, 0, width, height);
-    
-    ctx.fillStyle = "white";
-    ctx.fillRect(0,0,width,height);
+    ctx.fillStyle = "white"; ctx.fillRect(0,0,width,height);
 
     const centerX = width / 2 + offset.x;
     const centerY = height / 2 + offset.y;
@@ -315,23 +344,20 @@ const App = () => {
         const rw = resolveVal(img.width, currentContext);
         const rr = resolveVal(img.rotation, currentContext);
         const ro = resolveVal(img.opacity, currentContext);
-
         const p = toScreen(rx, ry, width, height);
         const imgW = rw * zoom;
         const imgH = (img.element.height / img.element.width) * imgW;
-        ctx.save();
-        ctx.translate(p.px, p.py);
-        ctx.rotate(rr * Math.PI / 180);
-        ctx.globalAlpha = ro;
-        ctx.drawImage(img.element, -imgW/2, -imgH/2, imgW, imgH);
-        ctx.restore();
+        ctx.save(); ctx.translate(p.px, p.py); ctx.rotate(rr * Math.PI / 180); ctx.globalAlpha = ro;
+        ctx.drawImage(img.element, -imgW/2, -imgH/2, imgW, imgH); ctx.restore();
     });
 
     tables.forEach(table => {
       if (!table.visible) return;
       table.points.forEach(p => {
           if(p.x !== '' && p.y !== '') {
-            const sp = toScreen(parseFloat(p.x), parseFloat(p.y), width, height);
+            const vx = resolveVal(p.x, currentContext);
+            const vy = resolveVal(p.y, currentContext);
+            const sp = toScreen(vx, vy, width, height);
             drawPoint(ctx, sp.px, sp.py, table.pointShape, 5, table.color);
           }
       });
@@ -343,19 +369,11 @@ const App = () => {
         const ry = resolveVal(lbl.y, currentContext);
         const rr = resolveVal(lbl.rotation, currentContext);
         const rs = resolveVal(lbl.fontSize, currentContext);
-
         const p = toScreen(rx, ry, width, height);
-        ctx.save();
-        ctx.translate(p.px, p.py);
-        ctx.rotate(rr * Math.PI / 180);
-        ctx.fillStyle = lbl.color; 
-        ctx.font = `bold ${rs}px sans-serif`; 
-        ctx.textAlign = 'center';
-        ctx.fillText(lbl.text, 0, -12);
-        ctx.restore();
-        if (lbl.showPoint) {
-            ctx.beginPath(); ctx.fillStyle = lbl.color; ctx.arc(p.px, p.py, 4, 0, Math.PI * 2); ctx.fill();
-        }
+        ctx.save(); ctx.translate(p.px, p.py); ctx.rotate(rr * Math.PI / 180);
+        ctx.fillStyle = lbl.color; ctx.font = `bold ${rs}px sans-serif`; ctx.textAlign = 'center';
+        ctx.fillText(lbl.text, 0, -12); ctx.restore();
+        if (lbl.showPoint) { ctx.beginPath(); ctx.fillStyle = lbl.color; ctx.arc(p.px, p.py, 4, 0, Math.PI * 2); ctx.fill(); }
     });
 
     compiledFunctions.forEach(f => {
@@ -363,7 +381,6 @@ const App = () => {
       const code = f.node.compile();
       const res = 4; const rows = Math.ceil(height / res); const cols = Math.ceil(width / res);
       const gridData = new Float32Array((rows + 1) * (cols + 1));
-      
       const dMin = f.domainMin !== '' ? parseFloat(f.domainMin) : -Infinity;
       const dMax = f.domainMax !== '' ? parseFloat(f.domainMax) : Infinity;
       const rMin = f.rangeMin !== '' ? parseFloat(f.rangeMin) : -Infinity;
@@ -376,7 +393,6 @@ const App = () => {
           try { gridData[j * (cols + 1) + i] = code.evaluate({ x: m.x, y: m.y, ...f.context }); } catch (e) { gridData[j * (cols + 1) + i] = NaN; }
         }
       }
-
       if (f.operator !== '=') {
         ctx.fillStyle = f.color + '33';
         for (let j = 0; j < rows; j++) {
@@ -390,10 +406,8 @@ const App = () => {
           }
         }
       }
-
       ctx.beginPath(); ctx.strokeStyle = f.color; ctx.lineWidth = f.thickness;
       if (f.operator === '>' || f.operator === '<') ctx.setLineDash([10, 5]); else ctx.setLineDash([]);
-      
       for (let j = 0; j < rows; j++) {
         for (let i = 0; i < cols; i++) {
           const x0 = i * res, x1 = (i + 1) * res, y0 = j * res, y1 = (j + 1) * res;
@@ -404,8 +418,7 @@ const App = () => {
           if (edges.length >= 2) { ctx.moveTo(edges[0].x, edges[0].y); ctx.lineTo(edges[1].x, edges[1].y); }
         }
       }
-      ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.stroke(); ctx.setLineDash([]);
     });
 
     if (graphTitle) {
@@ -429,18 +442,22 @@ const App = () => {
       </button>
 
       <div className={`fixed inset-y-0 right-0 w-80 bg-slate-50 border-l border-slate-200 flex flex-col sidebar-scroll p-6 space-y-6 shadow-2xl z-40 transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-        <h2 className="font-bold text-slate-800 text-xl border-b pb-2">مختبر الهندسة</h2>
+        <h2 className="font-bold text-slate-800 text-xl border-b pb-2">موقع التكامل</h2>
         
-        <div className="grid grid-cols-3 gap-1">
-            <button onClick={handleNewProject} className="bg-white border border-slate-300 text-[10px] p-1 rounded font-bold hover:bg-slate-100 transition-colors">📄 جديد</button>
-            <button onClick={handleSaveToFile} className="bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] p-1 rounded font-bold hover:bg-indigo-100 transition-colors">💾 حفظ (.geolab)</button>
-            <label className="bg-white border border-slate-300 text-[10px] p-1 rounded font-bold text-center cursor-pointer hover:bg-slate-100 transition-colors">📂 فتح<input type="file" accept=".geolab,.json" className="hidden" onChange={handleOpenFile} /></label>
+        <div className="grid grid-cols-2 gap-2">
+            <button onClick={handleNewProject} className="bg-white border border-slate-300 text-[10px] p-2 rounded font-bold hover:bg-slate-100 transition-colors">📄 جديد</button>
+            <label className="bg-white border border-slate-300 text-[10px] p-2 rounded font-bold text-center cursor-pointer hover:bg-slate-100 transition-colors">📂 فتح<input type="file" accept=".geolab,.json" className="hidden" onChange={handleOpenFile} /></label>
+        </div>
+        
+        <div className="grid grid-cols-2 gap-2">
+            <button onClick={handleSaveToFile} className="bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] p-2 rounded font-bold hover:bg-indigo-100 transition-colors">💾 حفظ للجهاز</button>
+            <button onClick={handleSaveOnline} className="bg-sky-600 border border-sky-700 text-white text-[10px] p-2 rounded font-bold hover:bg-sky-700 transition-colors">☁️ حفظ عبر الإنترنت</button>
         </div>
 
         <div className="grid grid-cols-2 gap-2">
             <button onClick={() => setSliders([...sliders, { id: 's'+Date.now(), name: 'var', value: 1, min: -10, max: 10, step: 0.1, isAnimating: false, speed: 1, mode: 'forward', direction: 1 }])} className="text-[11px] bg-indigo-600 text-white p-2 rounded font-bold">+ منزلق</button>
             <button onClick={() => setFunctions([...functions, { id: 'f'+Date.now(), expression: "y = x", color: '#3b82f6', visible: true, thickness: 3, domainMin: '', domainMax: '', rangeMin: '', rangeMax: '' }])} className="text-[11px] bg-blue-600 text-white p-2 rounded font-bold">+ دالة</button>
-            <button onClick={() => setTables([...tables, { id: 't'+Date.now(), name: "جدول جديد", visible: true, color: '#f59e0b', pointShape: 'circle', points: [{ x: 0, y: 0 }] }])} className="text-[11px] bg-amber-500 text-white p-2 rounded font-bold">+ جدول</button>
+            <button onClick={() => setTables([...tables, { id: 't'+Date.now(), name: "جدول جديد", visible: true, color: '#f59e0b', pointShape: 'circle', points: [{ x: "0", y: "0" }] }])} className="text-[11px] bg-amber-500 text-white p-2 rounded font-bold">+ جدول</button>
             <button onClick={() => setLabels([...labels, { id: 'l'+Date.now(), text: "نص جديد", x: "2", y: "2", color: '#059669', visible: true, showPoint: true, rotation: "0", fontSize: "14" }])} className="text-[11px] bg-emerald-600 text-white p-2 rounded font-bold">+ نص</button>
             <label className="text-[11px] bg-rose-500 text-white p-2 rounded font-bold text-center cursor-pointer">+ صورة<input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} /></label>
         </div>
@@ -516,8 +533,20 @@ const App = () => {
         {tables.map(t => (
           <div key={t.id} className="p-3 bg-white border rounded-xl shadow-sm space-y-2">
             <div className="flex justify-between items-center text-xs font-bold border-b pb-1"><div className="flex items-center gap-2"><input type="color" value={t.color} onChange={e => setTables(prev => prev.map(item => item.id === t.id ? {...item, color: e.target.value} : item))} className="w-4 h-4 border-none" /><input type="text" className="w-24 bg-transparent" value={t.name} onChange={e => setTables(prev => prev.map(item => item.id === t.id ? {...item, name: e.target.value} : item))} /></div><button onClick={() => setTables(tables.filter(x => x.id !== t.id))} className="text-red-300 text-lg">×</button></div>
-            <table className="w-full text-center text-[10px]"><tbody>{t.points.map((p, idx) => (<tr key={idx}><td><input type="number" className="w-full p-1 border-none text-center" value={p.x} onChange={e => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: tab.points.map((pt, i) => i === idx ? {...pt, x: e.target.value} : pt)} : tab))} /></td><td><input type="number" className="w-full p-1 border-none text-center" value={p.y} onChange={e => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: tab.points.map((pt, i) => i === idx ? {...pt, y: e.target.value} : pt)} : tab))} /></td><td><button className="text-red-400 font-bold px-1" onClick={() => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: tab.points.filter((_, i) => i !== idx)} : tab))}>×</button></td></tr>))}</tbody></table>
-            <button className="w-full py-1 text-[10px] bg-slate-100 hover:bg-slate-200 rounded font-bold" onClick={() => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: [...tab.points, {x:0, y:0}]} : tab))}>+ صف</button>
+            <div className="flex items-center justify-between text-[10px] mb-2">
+              <label>شكل النقطة:</label>
+              <select value={t.pointShape} onChange={e => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, pointShape: e.target.value} : tab))} className="border rounded text-[9px] p-0.5">
+                <option value="circle">دائرة ●</option>
+                <option value="square">مربع ■</option>
+                <option value="triangle">مثلث ▲</option>
+                <option value="diamond">معين ◆</option>
+              </select>
+            </div>
+            <table className="w-full text-center text-[10px]">
+              <thead><tr><th>X</th><th>Y</th><th></th></tr></thead>
+              <tbody>{t.points.map((p, idx) => (<tr key={idx}><td><input type="text" className="w-full p-1 border-none text-center bg-slate-50" value={p.x} onChange={e => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: tab.points.map((pt, i) => i === idx ? {...pt, x: e.target.value} : pt)} : tab))} /></td><td><input type="text" className="w-full p-1 border-none text-center bg-slate-50" value={p.y} onChange={e => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: tab.points.map((pt, i) => i === idx ? {...pt, y: e.target.value} : pt)} : tab))} /></td><td><button className="text-red-400 font-bold px-1" onClick={() => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: tab.points.filter((_, i) => i !== idx)} : tab))}>×</button></td></tr>))}</tbody>
+            </table>
+            <button className="w-full py-1 text-[10px] bg-slate-100 hover:bg-slate-200 rounded font-bold" onClick={() => setTables(prev => prev.map(tab => tab.id === t.id ? {...tab, points: [...tab.points, {x:"0", y:"0"}]} : tab))}>+ صف</button>
           </div>
         ))}
 

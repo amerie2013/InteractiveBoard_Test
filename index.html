@@ -95,42 +95,10 @@ const App = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
+    // حفظ بملف ذو امتداد خاص للمختبر
     link.download = `${graphTitle.replace(/\s+/g, '_')}.geolab`;
     link.click();
     URL.revokeObjectURL(url);
-  };
-
-  // --- إضافة خاصية الحفظ عبر الإنترنت (NEW) ---
-  const handleSaveOnline = async () => {
-    const data = { 
-        version: "1.0",
-        functions, sliders, labels, tables, graphTitle, zoom, offset,
-        settings: { showGrid, showAxes, showLabels, gridStepX, gridStepY }
-    };
-    
-    const token = prompt("أدخل رمز GitHub Token الخاص بك (للحفظ السحابي):");
-    if(!token) return alert("مطلوب رمز الوصول للحفظ عبر الإنترنت.");
-
-    try {
-        const response = await fetch('https://api.github.com/gists', {
-            method: 'POST',
-            headers: { 'Authorization': `token ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                description: `Geometry Lab Project: ${graphTitle}`,
-                public: false,
-                files: { [`${graphTitle}.geolab`]: { content: JSON.stringify(data) } }
-            })
-        });
-        const result = await response.json();
-        if(result.html_url) {
-            alert(`تم الحفظ بنجاح! رابط الملف: ${result.html_url}`);
-            console.log("Gist URL:", result.html_url);
-        } else {
-            throw new Error("Failed to save.");
-        }
-    } catch (err) {
-        alert("خطأ أثناء الحفظ عبر الإنترنت. تحقق من الرمز المكتوب.");
-    }
   };
 
   const handleOpenFile = (e) => {
@@ -157,8 +125,9 @@ const App = () => {
       } catch (err) { alert("خطأ: الملف غير متوافق أو تالف."); }
     };
     reader.readAsText(file);
-    e.target.value = ''; 
+    e.target.value = ''; // Reset for same file selection
   };
+  // ------------------------------------------
 
   const resolveVal = (val, context) => {
     if (typeof val === 'number') return val;
@@ -462,14 +431,10 @@ const App = () => {
       <div className={`fixed inset-y-0 right-0 w-80 bg-slate-50 border-l border-slate-200 flex flex-col sidebar-scroll p-6 space-y-6 shadow-2xl z-40 transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}`}>
         <h2 className="font-bold text-slate-800 text-xl border-b pb-2">مختبر الهندسة</h2>
         
-        <div className="grid grid-cols-2 gap-2">
-            <button onClick={handleNewProject} className="bg-white border border-slate-300 text-[10px] p-2 rounded font-bold hover:bg-slate-100 transition-colors">📄 جديد</button>
-            <label className="bg-white border border-slate-300 text-[10px] p-2 rounded font-bold text-center cursor-pointer hover:bg-slate-100 transition-colors">📂 فتح<input type="file" accept=".geolab,.json" className="hidden" onChange={handleOpenFile} /></label>
-        </div>
-        
-        <div className="grid grid-cols-2 gap-2">
-            <button onClick={handleSaveToFile} className="bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] p-2 rounded font-bold hover:bg-indigo-100 transition-colors">💾 حفظ للجهاز</button>
-            <button onClick={handleSaveOnline} className="bg-sky-600 border border-sky-700 text-white text-[10px] p-2 rounded font-bold hover:bg-sky-700 transition-colors">☁️ حفظ عبر الإنترنت</button>
+        <div className="grid grid-cols-3 gap-1">
+            <button onClick={handleNewProject} className="bg-white border border-slate-300 text-[10px] p-1 rounded font-bold hover:bg-slate-100 transition-colors">📄 جديد</button>
+            <button onClick={handleSaveToFile} className="bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] p-1 rounded font-bold hover:bg-indigo-100 transition-colors">💾 حفظ (.geolab)</button>
+            <label className="bg-white border border-slate-300 text-[10px] p-1 rounded font-bold text-center cursor-pointer hover:bg-slate-100 transition-colors">📂 فتح<input type="file" accept=".geolab,.json" className="hidden" onChange={handleOpenFile} /></label>
         </div>
 
         <div className="grid grid-cols-2 gap-2">

@@ -72,28 +72,45 @@ const App = () => {
   const parseStep = (val) => val === "pi" ? Math.PI : (val === "auto" ? null : parseFloat(val));
   const config = { minZoom: 2, maxZoom: 1000, gridColor: '#f1f5f9', axisColor: '#334155', labelColor: '#94a3b8' };
 
-  // --- ميزة التضمين الذكي الجديدة ---
+  // --- التعديل: توليد كود التضمين لكل البيانات بصيغة مشفرة آمنة ---
   const generateEmbedUrl = () => {
     const baseUrl = window.location.origin + window.location.pathname;
-    const params = new URLSearchParams();
-    params.set('embed', 'true');
-    if (graphTitle) params.set('title', graphTitle);
-    if (functions.length > 0) params.set('f', functions[0].expression);
-    if (sliders.length > 0) {
-      params.set('v', sliders[0].name);
-      params.set('val', sliders[0].value);
-      params.set('min', sliders[0].min);
-      params.set('max', sliders[0].max);
-      params.set('animate', sliders[0].isAnimating);
-      params.set('mode', sliders[0].mode);
-    }
-    if (!showGrid) params.set('grid', 'false');
-    if (!showAxes) params.set('axes', 'false');
-    return `<iframe src="${baseUrl}?${params.toString()}" width="800" height="600" style="border:1px solid #ccc; border-radius:12px;"></iframe>`;
+    const dataToSave = {
+        f: functions,
+        s: sliders,
+        t: tables,
+        l: labels,
+        title: graphTitle,
+        settings: { showGrid, showAxes, showLabels }
+    };
+    // تحويل كل البيانات إلى نص مضغوط (Base64) ليتم نقلها عبر الرابط
+    const encodedData = btoa(unescape(encodeURIComponent(JSON.stringify(dataToSave))));
+    return `<iframe src="${baseUrl}?embed=true&data=${encodedData}" width="800" height="600" style="border:1px solid #ccc; border-radius:12px;"></iframe>`;
   };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    
+    // أولاً: التحقق من وجود بيانات مجمعة (Encoded Data)
+    const encodedData = params.get('data');
+    if (encodedData) {
+        try {
+            const decodedData = JSON.parse(decodeURIComponent(escape(atob(encodedData))));
+            if (decodedData.f) setFunctions(decodedData.f);
+            if (decodedData.s) setSliders(decodedData.s);
+            if (decodedData.t) setTables(decodedData.t);
+            if (decodedData.l) setLabels(decodedData.l);
+            if (decodedData.title) setGraphTitle(decodedData.title);
+            if (decodedData.settings) {
+                setShowGrid(decodedData.settings.showGrid);
+                setShowAxes(decodedData.settings.showAxes);
+                setShowLabels(decodedData.settings.showLabels);
+            }
+            return; // إنهاء المهمة هنا لأننا حملنا كل شيء
+        } catch (e) { console.error("Error decoding embed data"); }
+    }
+
+    // ثانياً: استكمال القراءة العادية للمعايير الفردية (للتوافق القديم)
     if (params.get('title')) setGraphTitle(params.get('title'));
     if (params.get('f')) {
       setFunctions([{ id: 'f_url', expression: params.get('f'), color: '#3b82f6', visible: true, thickness: 3, domainMin: '', domainMax: '', rangeMin: '', rangeMax: '' }]);
@@ -159,7 +176,7 @@ const App = () => {
         if(result.html_url) {
             alert(`تم الحفظ بنجاح! رابط الملف: ${result.html_url}`);
         } else { throw new Error("Failed to save."); }
-    } catch (err) { alert("خطأ أثناء الحفظ عبر الإنترنت. تحقق من الرمز المكتوب."); }
+    } catch (err) { alert("خطأ أثناء الحفظ عبر الإنترنت."); }
   };
 
   const handleOpenFile = (e) => {
